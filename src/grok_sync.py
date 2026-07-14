@@ -32,9 +32,11 @@ from shared import (  # noqa: E402
     OPENCODE_AUTH,
     acquire_lock,
     ensure_fresh_creds,
+    ensure_opencode_matches_active,
     fetch_user,
     is_token_expired,
     load_store,
+    opencode_matches_account,
     read_opencode_xai,
     release_lock,
     save_store,
@@ -145,6 +147,8 @@ def cmd_list() -> None:
 
 
 def cmd_status() -> None:
+    ensure_opencode_matches_active()
+
     store = load_store()
     active = store.get("active")
     accounts = store.get("accounts", {})
@@ -161,7 +165,7 @@ def cmd_status() -> None:
 
     live = read_opencode_xai()
     if live and live.get("accessToken"):
-        same = live["accessToken"] == acc.get("accessToken")
+        same = opencode_matches_account(live, acc)
         print(f"OpenCode xai: {'matches active' if same else 'DIFFERS from active'}")
         print(f"OpenCode tok: {_fmt_remaining(live.get('expiresAt'))}")
     else:
@@ -204,48 +208,22 @@ def do_sync() -> None:
         return
 
     acc = dict(store["accounts"][active])
-    fresh = ensure_fresh_creds(acc)
-    if not fresh:
+    if not ensure_fresh_creds(acc):
         print(f"Active account '{active}' expired and refresh failed.", file=sys.stderr)
         print("Re-login that account and re-run: grok-sync --login " + active, file=sys.stderr)
         sys.exit(1)
 
-    # Persist refreshed tokens
-    if (
-        fresh.get("accessToken") != acc.get("accessToken")
-        or fresh.get("expiresAt") != acc.get("expiresAt")
-    ):
-        if acquire_lock():
-            try:
-                store = load_store()
-                if active in store["accounts"]:
-                    store["accounts"][active].update(
-                        {
-                            "accessToken": fresh["accessToken"],
-                            "refreshToken": fresh.get("refreshToken"),
-                            "expiresAt": fresh.get("expiresAt"),
-                            "updatedAt": datetime.now(timezone.utc)
-                            .isoformat()
-                            .replace("+00:00", "Z"),
-                        }
-                    )
-                    save_store(store)
-            finally:
-                release_lock()
-
     try:
-        write_opencode_xai(
-            fresh["accessToken"],
-            fresh.get("refreshToken"),
-            fresh.get("expiresAt"),
-        )
+        ensure_opencode_matches_active(quiet=True)
     except FileNotFoundError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(1)
 
+    store = load_store()
+    acc = store["accounts"][active]
     print(
         f"{datetime.now().isoformat()} synced active={active} "
-        f"({_fmt_remaining(fresh.get('expiresAt'))})"
+        f"({_fmt_remaining(acc.get('expiresAt'))})"
     )
 
 

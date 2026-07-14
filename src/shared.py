@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -205,6 +206,76 @@ def write_opencode_xai(access: str, refresh: str | None, expires_at: int | None)
         "expires": expires_at,
     }
     write_json_atomic(OPENCODE_AUTH, auth)
+
+
+def opencode_matches_account(live: dict[str, Any] | None, acc: dict[str, Any] | None) -> bool:
+    if not live or not acc:
+        return False
+    live_tok = live.get("accessToken") or ""
+    acc_tok = acc.get("accessToken") or ""
+    if live_tok and acc_tok and live_tok == acc_tok:
+        return True
+    live_ref = live.get("refreshToken") or ""
+    acc_ref = acc.get("refreshToken") or ""
+    return bool(live_ref and acc_ref and live_ref == acc_ref)
+
+
+def ensure_opencode_matches_active(*, quiet: bool = False) -> str | None:
+    store = load_store()
+    active = store.get("active")
+    accounts = store.get("accounts", {})
+    if not active or active not in accounts:
+        return None
+
+    acc = dict(accounts[active])
+    fresh = ensure_fresh_creds(acc)
+    if not fresh:
+        return active
+
+    if (
+        fresh.get("accessToken") != acc.get("accessToken")
+        or fresh.get("expiresAt") != acc.get("expiresAt")
+        or fresh.get("refreshToken") != acc.get("refreshToken")
+    ):
+        if acquire_lock():
+            try:
+                store = load_store()
+                if active in store.get("accounts", {}):
+                    store["accounts"][active].update(
+                        {
+                            "accessToken": fresh["accessToken"],
+                            "refreshToken": fresh.get("refreshToken"),
+                            "expiresAt": fresh.get("expiresAt"),
+                            "updatedAt": datetime.now(timezone.utc)
+                            .isoformat()
+                            .replace("+00:00", "Z"),
+                        }
+                    )
+                    save_store(store)
+            finally:
+                release_lock()
+
+    live = read_opencode_xai()
+    if opencode_matches_account(live, fresh):
+        return active
+
+    try:
+        write_opencode_xai(
+            fresh["accessToken"],
+            fresh.get("refreshToken"),
+            fresh.get("expiresAt"),
+        )
+    except (FileNotFoundError, OSError, json.JSONDecodeError) as exc:
+        if not quiet:
+            print(f"Warning: could not sync OpenCode xai to '{active}': {exc}", file=sys.stderr)
+        return active
+
+    if not quiet:
+        print(
+            f"Synced OpenCode xai → {active} (was out of date)",
+            file=sys.stderr,
+        )
+    return active
 
 
 def is_token_expired(expires_at: int | float | None, skew_seconds: int = 60) -> bool:

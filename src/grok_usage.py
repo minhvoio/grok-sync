@@ -37,6 +37,7 @@ from shared import (  # noqa: E402
     bar,
     clamp_pct,
     ensure_fresh_creds,
+    ensure_opencode_matches_active,
     fetch_monthly_billing,
     fetch_user,
     fetch_weekly_billing,
@@ -56,7 +57,6 @@ CACHE_TTL_MS = 90_000
 
 
 def resolve_creds(name: str | None) -> tuple[dict[str, Any] | None, str | None]:
-    """Return (creds, label) for a profile name, store name, or live session."""
     if name:
         profile = load_profile(name)
         if profile and profile.get("accessToken"):
@@ -66,6 +66,8 @@ def resolve_creds(name: str | None) -> tuple[dict[str, Any] | None, str | None]:
         if acc and acc.get("accessToken"):
             return acc, name
         return None, name
+
+    ensure_opencode_matches_active()
 
     store = load_store()
     active = store.get("active")
@@ -400,6 +402,8 @@ def cmd_list() -> None:
 
 
 def cmd_all(as_json: bool) -> None:
+    ensure_opencode_matches_active(quiet=as_json)
+
     names: list[str] = []
     store = load_store()
     active = store.get("active")
