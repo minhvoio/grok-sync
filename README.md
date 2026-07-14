@@ -2,12 +2,14 @@
 
 Multi-account **Grok / xAI SuperGrok** OAuth switcher + live usage monitor for OpenCode.
 
-Two commands:
+One install gives you **two commands**:
 
-| Command | Role | Claude equivalent |
-|---------|------|-------------------|
-| `grok-sync` | login / switch / rotate accounts | `claude-sync` |
-| `gu` | live SuperGrok usage bars | `cu` |
+| Command | Role |
+|---------|------|
+| `grok-sync` | login / switch / rotate accounts |
+| `gu` | live SuperGrok usage bars |
+
+Yes — **`gu` is included in this package.** Installing `grok-sync` installs both.
 
 ## Why
 
@@ -17,14 +19,15 @@ OpenCode only keeps **one** `xai` session at a time. `grok-sync` stores named ac
 ## What you'll see
 
 ```
-  Grok Usage  (work)  zeldacadwell95965@hotmail.com  -  2026-07-14 12:40
+  Grok Usage  (work *)  you@example.com  -  2026-07-14 12:40
   ───────────────────────────────────────────────────────
   Weekly     ████░░░░░░░░░░░░░░░░   22.0%  resets in 6d10h
   Monthly    ███░░░░░░░░░░░░░░░░░   15.9%  3175 / 20000
   Api        ████░░░░░░░░░░░░░░░░   22.0%
 ```
 
-Bars are green when there's headroom, yellow at 70%+, red at 90%+.
+Bars are green when there's headroom, yellow at 70%+, red at 90%+.  
+`*` in `gu all` marks the active account (the one OpenCode is synced to).
 
 ---
 
@@ -55,6 +58,13 @@ Requirements:
 - Python 3
 - curl
 - OpenCode with at least one xAI Grok OAuth login
+
+After install you should have both binaries:
+
+```bash
+which grok-sync
+which gu
+```
 
 ---
 
@@ -96,12 +106,14 @@ Switching writes into OpenCode:
 ~/.local/share/opencode/auth.json   →  "xai": { type, access, refresh, expires }
 ```
 
+The store’s active account is the source of truth. `gu`, `gu all`, `grok-sync --status`, and `grok-sync --sync` auto-heal OpenCode if it drifts.
+
 ### Usage (`gu`)
 
 ```bash
-gu                 # active grok-sync account, else live OpenCode xai
+gu                 # active grok-sync account (syncs OpenCode first)
 gu work            # named account / profile
-gu all             # every saved account
+gu all             # every saved account (* = active)
 gu --json
 gu --no-cache
 gu save team-a     # snapshot current OpenCode tokens as a usage profile
@@ -112,8 +124,16 @@ Credential resolution order for `gu`:
 
 1. Named profile: `~/.config/ai-usage-monitors/profiles/<name>/grok.json`
 2. `grok-sync` store account with that name
-3. Active `grok-sync` account
+3. Active `grok-sync` account (OpenCode is synced to match)
 4. Live OpenCode `xai` session
+
+### What the bars mean
+
+| Line | Meaning |
+|------|---------|
+| **Weekly** | SuperGrok shared weekly usage pool |
+| **Monthly** | Monthly credits used / limit |
+| **Api** | Weekly pool used via API / coding tools (OpenCode, Grok CLI, etc.) |
 
 ### JSON shape (`gu --json`)
 
@@ -147,7 +167,7 @@ xAI SuperGrok OAuth (same client OpenCode / Grok CLI use):
 
 ### Usage
 
-Grok has no public “usage” doc endpoint for SuperGrok pools. The Grok CLI billing surface works with the same OAuth bearer:
+The Grok CLI billing surface works with the same OAuth bearer:
 
 ```http
 GET https://cli-chat-proxy.grok.com/v1/billing?format=credits   # weekly %
@@ -156,16 +176,6 @@ GET https://cli-chat-proxy.grok.com/v1/user                     # email label
 ```
 
 Responses are cached 90 seconds so repeated `gu` calls don't spam the API.
-
----
-
-## Companion
-
-Live Claude / Codex monitors live in a separate repo:
-
-- [`ai-usage-monitors`](https://github.com/minhvoio/ai-usage-monitors) → `cu` / `cou`
-
-Claude multi-account switcher on your machine is still the local `claude-sync` tool; this package is the Grok twin.
 
 ---
 
