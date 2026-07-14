@@ -19,7 +19,7 @@ OpenCode only keeps **one** `xai` session at a time. `grok-sync` stores named ac
 ## What you'll see
 
 ```
-  Grok Usage  (work *)  you@example.com  -  2026-07-14 12:40
+  Grok Usage  (work *)  youremail@example.com  -  2026-07-14 12:40
   ───────────────────────────────────────────────────────
   Weekly     ████░░░░░░░░░░░░░░░░   22.0%  resets in 6d10h
   Monthly    ███░░░░░░░░░░░░░░░░░   15.9%  3175 / 20000
@@ -147,7 +147,7 @@ Credential resolution order for `gu`:
   "monthlyLimit": 20000,
   "monthlyUsed": 3175,
   "monthlyPercent": 15.875,
-  "email": "you@example.com"
+  "email": "youremail@example.com"
 }
 ```
 
