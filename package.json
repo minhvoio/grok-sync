@@ -1,0 +1,40 @@
+{
+  "name": "grok-sync",
+  "version": "1.0.0",
+  "description": "Multi-account Grok/xAI OAuth switcher (grok-sync) + live SuperGrok usage monitor (gu)",
+  "bin": {
+    "grok-sync": "./bin/grok-sync.mjs",
+    "gu": "./bin/gu.mjs"
+  },
+  "type": "module",
+  "files": [
+    "bin/",
+    "src/",
+    "LICENSE",
+    "README.md"
+  ],
+  "keywords": [
+    "grok",
+    "xai",
+    "supergrok",
+    "opencode",
+    "oauth",
+    "usage",
+    "monitor",
+    "multi-account",
+    "cli"
+  ],
+  "author": "minhvoio",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/minhvoio/grok-sync.git"
+  },
+  "bugs": {
+    "url": "https://github.com/minhvoio/grok-sync/issues"
+  },
+  "homepage": "https://github.com/minhvoio/grok-sync#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
