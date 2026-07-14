@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shared import (  # noqa: E402
     BOLD,
     DIM,
+    GREEN,
     RESET,
     bar,
     clamp_pct,
@@ -217,9 +218,18 @@ def write_cache(path: Path, data: dict[str, Any], token_prefix: str | None) -> N
         pass
 
 
-def format_limits(data: dict[str, Any], account_label: str | None = None) -> None:
+def format_limits(
+    data: dict[str, Any],
+    account_label: str | None = None,
+    *,
+    is_current: bool = False,
+) -> None:
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-    label_str = f"  ({BOLD}{account_label}{RESET})" if account_label else ""
+    if account_label:
+        current_tag = f" {GREEN}*{RESET}" if is_current else ""
+        label_str = f"  ({BOLD}{account_label}{RESET}{current_tag})"
+    else:
+        label_str = ""
     email = data.get("email")
     email_str = f"  {DIM}{email}{RESET}" if email else ""
 
@@ -293,6 +303,7 @@ def usage_for_creds(
     *,
     as_json: bool,
     use_cache: bool = True,
+    is_current: bool = False,
 ) -> dict[str, Any] | None:
     fresh = ensure_fresh_creds(creds)
     if not fresh:
@@ -319,7 +330,7 @@ def usage_for_creds(
             if as_json:
                 print(json.dumps(data))
             else:
-                format_limits(data, account_label=label)
+                format_limits(data, account_label=label, is_current=is_current)
             return data
 
     data = fetch_and_parse(fresh["accessToken"])
@@ -331,7 +342,7 @@ def usage_for_creds(
             if as_json:
                 print(json.dumps(data))
             else:
-                format_limits(data, account_label=label)
+                format_limits(data, account_label=label, is_current=is_current)
             return data
         print("Error: Could not reach Grok billing API.", file=sys.stderr)
         return None
@@ -340,7 +351,7 @@ def usage_for_creds(
     if as_json:
         print(json.dumps(data))
     else:
-        format_limits(data, account_label=label)
+        format_limits(data, account_label=label, is_current=is_current)
     return data
 
 
@@ -391,6 +402,7 @@ def cmd_list() -> None:
 def cmd_all(as_json: bool) -> None:
     names: list[str] = []
     store = load_store()
+    active = store.get("active")
     for name in store.get("accounts", {}):
         if name not in names:
             names.append(name)
@@ -409,6 +421,7 @@ def cmd_all(as_json: bool) -> None:
         if not creds:
             sys.stderr.write(f"  {DIM}[{name}: no credentials, skipped]{RESET}\n")
             continue
+        is_current = bool(active and name == active)
         # For all mode with --json, collect into one object.
         if as_json:
             fresh = ensure_fresh_creds(creds)
@@ -416,9 +429,10 @@ def cmd_all(as_json: bool) -> None:
                 continue
             data = fetch_and_parse(fresh["accessToken"])
             if data:
+                data = {**data, "isCurrent": is_current}
                 results[name] = data
         else:
-            usage_for_creds(creds, label, as_json=False)
+            usage_for_creds(creds, label, as_json=False, is_current=is_current)
 
     if as_json:
         print(json.dumps(results))
