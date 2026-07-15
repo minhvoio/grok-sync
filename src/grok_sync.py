@@ -34,6 +34,7 @@ from shared import (  # noqa: E402
     ensure_fresh_creds,
     ensure_opencode_matches_active,
     fetch_user,
+    format_auth_error,
     is_token_expired,
     load_store,
     opencode_matches_account,
@@ -71,10 +72,9 @@ def _snapshot_current(label: str) -> None:
         print(f"  3. Re-run: grok-sync --login {label}", file=sys.stderr)
         sys.exit(1)
 
-    fresh = ensure_fresh_creds(creds)
+    fresh, reason = ensure_fresh_creds(creds)
     if not fresh:
-        print("OpenCode xAI token is expired and refresh failed.", file=sys.stderr)
-        print("Re-login with: opencode auth login", file=sys.stderr)
+        print(format_auth_error(reason, label=label), file=sys.stderr)
         sys.exit(1)
 
     email = None
@@ -208,9 +208,12 @@ def do_sync() -> None:
         return
 
     acc = dict(store["accounts"][active])
-    if not ensure_fresh_creds(acc):
-        print(f"Active account '{active}' expired and refresh failed.", file=sys.stderr)
-        print("Re-login that account and re-run: grok-sync --login " + active, file=sys.stderr)
+    fresh, reason = ensure_fresh_creds(acc)
+    if not fresh:
+        print(
+            format_auth_error(reason, label=active, email=acc.get("email")),
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     try:

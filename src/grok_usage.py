@@ -33,7 +33,9 @@ from shared import (  # noqa: E402
     BOLD,
     DIM,
     GREEN,
+    RED,
     RESET,
+    YELLOW,
     bar,
     clamp_pct,
     ensure_fresh_creds,
@@ -41,6 +43,8 @@ from shared import (  # noqa: E402
     fetch_monthly_billing,
     fetch_user,
     fetch_weekly_billing,
+    format_auth_error,
+    is_token_expired,
     list_profiles,
     load_profile,
     load_store,
@@ -299,6 +303,29 @@ def fetch_and_parse(access_token: str) -> dict[str, Any] | None:
     return parse_usage(weekly, monthly, user)
 
 
+def print_expired_block(
+    label: str | None,
+    creds: dict[str, Any],
+    reason: str | None,
+    *,
+    is_current: bool = False,
+) -> None:
+    email = creds.get("email")
+    name = label or "unknown"
+    star = f" {GREEN}*{RESET}" if is_current else ""
+    print()
+    print(f"  {BOLD}Grok Usage{RESET}  ({BOLD}{name}{RESET}{star})")
+    print(f"  {'─' * 55}")
+    print(f"  {RED}Session expired{RESET}  {DIM}({reason or 'refresh_failed'}){RESET}")
+    if email:
+        print(f"  {DIM}{email}{RESET}")
+    print(f"  {YELLOW}Fix:{RESET}")
+    print(f"    opencode auth login")
+    print(f"    grok-sync --login {name}")
+    print(f"    gu {name}")
+    print()
+
+
 def usage_for_creds(
     creds: dict[str, Any],
     label: str | None,
@@ -306,15 +333,29 @@ def usage_for_creds(
     as_json: bool,
     use_cache: bool = True,
     is_current: bool = False,
+    quiet_errors: bool = False,
 ) -> dict[str, Any] | None:
-    fresh = ensure_fresh_creds(creds)
+    fresh, reason = ensure_fresh_creds(creds)
     if not fresh:
-        print(
-            f"Error: credentials expired and refresh failed"
-            + (f" for '{label}'" if label else "")
-            + ".",
-            file=sys.stderr,
-        )
+        if as_json:
+            print(
+                json.dumps(
+                    {
+                        "error": reason or "refresh_failed",
+                        "label": label,
+                        "email": creds.get("email"),
+                        "isCurrent": is_current,
+                    }
+                )
+            )
+            return None
+        if quiet_errors:
+            print_expired_block(label, creds, reason, is_current=is_current)
+        else:
+            print(
+                format_auth_error(reason, label=label, email=creds.get("email")),
+                file=sys.stderr,
+            )
         return None
 
     if (
@@ -363,7 +404,10 @@ def cmd_save(name: str) -> None:
         print("Error: No OpenCode xAI credentials found.", file=sys.stderr)
         print("Run: opencode auth login  (pick xAI Grok OAuth)", file=sys.stderr)
         sys.exit(1)
-    fresh = ensure_fresh_creds(creds) or creds
+    fresh, reason = ensure_fresh_creds(creds)
+    if not fresh:
+        print(format_auth_error(reason, label=name), file=sys.stderr)
+        sys.exit(1)
     user = fetch_user(fresh["accessToken"])
     save_profile(
         name,
@@ -378,10 +422,31 @@ def cmd_save(name: str) -> None:
     print(f"Use `gu {name}` to check usage.")
 
 
+def _token_status(creds: dict[str, Any]) -> str:
+    if not creds.get("accessToken"):
+        return "no token"
+    if is_token_expired(creds.get("expiresAt")):
+        if not creds.get("refreshToken"):
+            return "EXPIRED"
+        return "expired (refresh?)"
+    exp = creds.get("expiresAt")
+    if exp is None:
+        return "ok"
+    e = float(exp)
+    if e > 1_000_000_000_000:
+        e = e / 1000.0
+    rem = e - __import__("time").time()
+    if rem <= 0:
+        return "EXPIRED"
+    hours = int(rem // 3600)
+    mins = int((rem % 3600) // 60)
+    return f"{hours}h {mins}m"
+
+
 def cmd_list() -> None:
     profiles = list_profiles()
     store = load_store()
-    accounts = list(store.get("accounts", {}).keys())
+    accounts = store.get("accounts", {})
     active = store.get("active")
 
     if not profiles and not accounts:
@@ -392,9 +457,13 @@ def cmd_list() -> None:
 
     if accounts:
         print("grok-sync accounts:")
-        for name in accounts:
-            mark = " *" if name == active else ""
-            print(f"  {name}{mark}")
+        for name, acc in accounts.items():
+            mark = f" {GREEN}*{RESET}" if name == active else ""
+            status = _token_status(acc)
+            bad = status == "no token" or "expired" in status.lower()
+            color = RED if bad else DIM
+            email = acc.get("email") or ""
+            print(f"  {name}{mark}  {color}{status}{RESET}  {DIM}{email}{RESET}")
     if profiles:
         print("gu profiles:")
         for name in profiles:
@@ -402,7 +471,7 @@ def cmd_list() -> None:
 
 
 def cmd_all(as_json: bool) -> None:
-    ensure_opencode_matches_active(quiet=as_json)
+    ensure_opencode_matches_active(quiet=True)
 
     names: list[str] = []
     store = load_store()
@@ -420,26 +489,58 @@ def cmd_all(as_json: bool) -> None:
         return
 
     results: dict[str, Any] = {}
+    failed = 0
     for name in names:
         creds, label = resolve_creds(name)
         if not creds:
-            sys.stderr.write(f"  {DIM}[{name}: no credentials, skipped]{RESET}\n")
+            if as_json:
+                results[name] = {"error": "missing", "isCurrent": name == active}
+            else:
+                print_expired_block(
+                    name, {}, "missing", is_current=bool(active and name == active)
+                )
+            failed += 1
             continue
         is_current = bool(active and name == active)
-        # For all mode with --json, collect into one object.
         if as_json:
-            fresh = ensure_fresh_creds(creds)
+            fresh, reason = ensure_fresh_creds(creds)
             if not fresh:
+                results[name] = {
+                    "error": reason or "refresh_failed",
+                    "email": creds.get("email"),
+                    "isCurrent": is_current,
+                }
+                failed += 1
                 continue
             data = fetch_and_parse(fresh["accessToken"])
             if data:
-                data = {**data, "isCurrent": is_current}
-                results[name] = data
+                results[name] = {**data, "isCurrent": is_current}
+            else:
+                results[name] = {
+                    "error": "fetch_failed",
+                    "email": creds.get("email"),
+                    "isCurrent": is_current,
+                }
+                failed += 1
         else:
-            usage_for_creds(creds, label, as_json=False, is_current=is_current)
+            out = usage_for_creds(
+                creds,
+                label,
+                as_json=False,
+                is_current=is_current,
+                quiet_errors=True,
+            )
+            if out is None:
+                failed += 1
 
     if as_json:
         print(json.dumps(results))
+    elif failed and not as_json:
+        print(
+            f"  {DIM}{failed} account(s) need re-login "
+            f"(opencode auth login && grok-sync --login <name>){RESET}"
+        )
+        print()
 
 
 def main() -> None:
@@ -465,17 +566,13 @@ def main() -> None:
     if not creds or not creds.get("accessToken"):
         if profile_name:
             print(
-                f"Error: Profile/account '{profile_name}' not found or has no credentials.",
-                file=sys.stderr,
-            )
-            print(
-                f"Save it: opencode auth login && grok-sync --login {profile_name}",
+                format_auth_error("missing", label=profile_name),
                 file=sys.stderr,
             )
         else:
             print("Error: No Grok/xAI credentials found.", file=sys.stderr)
             print("  opencode auth login          # pick xAI Grok OAuth", file=sys.stderr)
-            print("  grok-sync --login <label>    # optional multi-account", file=sys.stderr)
+            print("  grok-sync --login <label>    # multi-account", file=sys.stderr)
         sys.exit(1)
 
     result = usage_for_creds(

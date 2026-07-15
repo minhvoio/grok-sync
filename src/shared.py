@@ -228,8 +228,23 @@ def ensure_opencode_matches_active(*, quiet: bool = False) -> str | None:
         return None
 
     acc = dict(accounts[active])
-    fresh = ensure_fresh_creds(acc)
+    fresh, reason = ensure_fresh_creds(acc)
     if not fresh:
+        if not quiet:
+            print(
+                format_auth_error(reason, label=active, email=acc.get("email")),
+                file=sys.stderr,
+            )
+            healthy = [
+                name
+                for name, other in accounts.items()
+                if name != active and other.get("accessToken")
+            ]
+            if healthy:
+                print(
+                    f"\nSwitch to a working account:\n  grok-sync --switch {healthy[0]}",
+                    file=sys.stderr,
+                )
         return active
 
     if (
@@ -288,36 +303,85 @@ def is_token_expired(expires_at: int | float | None, skew_seconds: int = 60) -> 
     return exp <= time.time() + skew_seconds
 
 
-def refresh_access_token(refresh_token: str) -> dict[str, Any] | None:
+def refresh_access_token(
+    refresh_token: str,
+) -> tuple[dict[str, Any] | None, str | None]:
     body = (
         f"grant_type=refresh_token"
         f"&refresh_token={refresh_token}"
         f"&client_id={CLIENT_ID}"
     )
     parsed = curl_json(TOKEN_URL, method="POST", data=body, form=True)
-    if not parsed or not parsed.get("access_token"):
-        return None
-    expires_in = int(parsed.get("expires_in") or 3600)
-    return {
-        "accessToken": parsed["access_token"],
-        "refreshToken": parsed.get("refresh_token") or refresh_token,
-        "expiresAt": int(time.time() * 1000) + expires_in * 1000,
-    }
+    if not parsed:
+        return None, "network"
+    if parsed.get("access_token"):
+        expires_in = int(parsed.get("expires_in") or 3600)
+        return (
+            {
+                "accessToken": parsed["access_token"],
+                "refreshToken": parsed.get("refresh_token") or refresh_token,
+                "expiresAt": int(time.time() * 1000) + expires_in * 1000,
+            },
+            None,
+        )
+    err = str(parsed.get("error") or "")
+    desc = str(parsed.get("error_description") or "")
+    blob = f"{err} {desc}".lower()
+    if "revok" in blob or err == "invalid_grant":
+        return None, "revoked"
+    if err:
+        return None, "refresh_failed"
+    return None, "refresh_failed"
 
 
-def ensure_fresh_creds(creds: dict[str, Any]) -> dict[str, Any] | None:
+def ensure_fresh_creds(
+    creds: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str | None]:
     if not creds.get("accessToken"):
-        return None
+        return None, "missing"
     if not is_token_expired(creds.get("expiresAt")):
-        return creds
+        return creds, None
     refresh = creds.get("refreshToken")
     if not refresh:
-        return None
-    refreshed = refresh_access_token(refresh)
+        return None, "expired_no_refresh"
+    refreshed, reason = refresh_access_token(refresh)
     if not refreshed:
-        return None
-    out = {**creds, **refreshed}
-    return out
+        return None, reason or "refresh_failed"
+    return {**creds, **refreshed}, None
+
+
+def relogin_hint(label: str | None = None, email: str | None = None) -> str:
+    who = f" ({email})" if email else ""
+    name = label or "<name>"
+    return (
+        f"Re-login{who}:\n"
+        f"  1. opencode auth login          # xAI Grok OAuth\n"
+        f"  2. grok-sync --login {name}\n"
+        f"  3. gu {name}"
+    )
+
+
+def format_auth_error(
+    reason: str | None,
+    *,
+    label: str | None = None,
+    email: str | None = None,
+) -> str:
+    name = f" '{label}'" if label else ""
+    match reason:
+        case "revoked":
+            head = f"Session expired for{name}: refresh token was revoked by xAI."
+        case "expired_no_refresh":
+            head = f"Session expired for{name}: no refresh token saved."
+        case "missing":
+            head = f"No credentials found for{name}."
+        case "network":
+            head = f"Could not refresh{name}: network error talking to auth.x.ai."
+        case "refresh_failed":
+            head = f"Session expired for{name}: token refresh failed."
+        case _:
+            head = f"Credentials unusable for{name}."
+    return f"{head}\n{relogin_hint(label, email)}"
 
 
 def fetch_user(access_token: str) -> dict[str, Any] | None:
